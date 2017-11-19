@@ -1,0 +1,530 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Sentiment Analysis on Todays NYTimes</title>
+        <script src="https://d3js.org/d3.v4.min.js"></script>
+        <style>
+            path {
+                fill: none;
+                stroke: none;
+            }
+            h1,h2,h3,h4,h5,h6 {
+                text-align: center;
+            }
+            header {
+                border: 5px solid gray;
+                border-radius: 5px;
+                width: 900px;
+            }
+            #main-subheading {
+                color: gray;
+            }
+            #container, #summary-container {
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                padding: 15px;
+                width: 100%;
+            }
+            #summary-container {
+                width: 900px;
+                border-bottom: 2px solid lightgray;
+            }
+            #summary-container h1 {
+                font-size: 36pt;
+            }
+            body {
+                background-color: #f8fff8;
+            }
+            div.sent-col {
+                float: left;
+                width: 300px;
+                padding: 10px;
+            }
+            div.example-usage {
+                margin-bottom: 5px;
+                padding: 3px;
+                border-bottom: 1px solid lightgray;
+            }
+            span.word-highlight0 {
+                background-color: #b81800;
+                background-color: rgba(176,18,0,0.5);
+            }
+            span.word-highlight1 {
+                background-color: #007dd6;
+                background-color: rgba(0,125,214,0.5);
+            }
+            span.word-highlight2 {
+                background-color: #cccccc;
+                background-color: rgba(192,192,192,0.5);
+            }
+            .buttonsContainer {
+                display: flex;
+                flex-direction: row;
+                justify-content: center;
+            }
+            button {
+                border: none;
+                border-radius: 2px;
+                margin: 2px;
+            }
+            button:hover {
+                cursor: pointer;
+            }
+            button.yes {
+                background-color: #464697;
+                color: white;
+            }
+            button.no {
+                background-color: #cccccc;
+                color: black;
+            }
+            a.article-title {
+                color: black;
+                font-style: italic;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="container">
+            <header>
+                <h1 id="main-heading">Sentiment Analysis on Today's New York Times</h1>
+                <h3 id="main-subheading">Do Different Words Convey Positive or Negative Emotion?</h3>
+            </header>
+            <div id="sentiment-beeswarm-container">
+            </div>
+            <div id="section-selection-container">
+            </div>
+            <div id="summary-container">
+            </div>
+            <div id="sentences-container">
+                <div id="bad-container" class="sent-col">
+                </div>
+                <div id="neutral-container" class="sent-col">
+                </div>
+                <div id="good-container" class="sent-col">
+                </div>
+            </div>
+        </div>
+        <script>
+            // Load the two JSON files
+            d3.json("nytimes_sentiment.json", function(error,data) {
+                d3.json("top_words.json", function(error2,topws) {
+                    // Get the section names
+                    var sections = [];
+                    for (var secName in data) {
+                        sections.push(secName);
+                    }
+                    
+                    console.log(sections);
+
+                    var sectionWordCounts = {};
+                    
+                    // Count the number of words in each section so that it only must be done once
+                    function getNumWords(sec) {
+                        var total = 0;
+                        for (var artic of data[sec]) {
+                            for (var sent of artic["content"]) {
+                                for (var word in sent["words"]) {
+                                    total += sent["words"][word];
+                                }
+                            }
+                        }
+                        return total;
+                    }
+
+                    for (var sec of sections) {
+                        sectionWordCounts[sec] = getNumWords(sec);
+                    }
+
+                    console.log(sectionWordCounts);
+
+                    function getWordsAcrossSections(secs=sections) {
+                        var total = 0;
+                        for (var sec of secs) {
+                            total += sectionWordCounts[sec];
+                        }
+                        return total;
+                    }
+                    
+                    // Gets all the necessary metrics on a word for the visualization.
+                    // These metrics are:
+                    // * sentiment: mean sentiment value over all sentences containing the word
+                    // * numBad,numGood,numNeutral: the number of sentences with 
+                    //     negative, positive, and zero sentiment respectively
+                    // * frequency: the frequency of the word
+                    // Args:
+                    // word: the word to evaluate
+                    // secs: array of sections to evaluate for. Defaults to all sections.
+                    function getWordMetrics(word,secs=sections) {
+                        var sentTotal = 0;
+                        var freqTotal = 0;
+                        var numSentences = 0;
+                        var numBad = 0;
+                        var numGood = 0;
+                        var numNeutral = 0;
+                        for (var sec of secs) {
+                            for (var artic of data[sec]) {
+                                for (var sent of artic["content"]) {
+                                    if (sent["words"].hasOwnProperty(word)) {
+                                        sentTotal += sent["sentiment"];
+                                        freqTotal += sent["words"][word];
+                                        numSentences ++;
+                                        if (sent["sentiment"] < 0) {
+                                            numBad++;
+                                        } else if (sent["sentiment"] > 0) {
+                                            numGood++;
+                                        } else {
+                                            numNeutral++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        var numWords = getWordsAcrossSections(secs);
+                        return {"sentiment": sentTotal/numSentences,
+                                "numBad": numBad,
+                                "numGood": numGood,
+                                "numNeutral": numNeutral,
+                               "frequency": freqTotal/numWords};
+                    }
+                    
+                    // Default setup parameters for SVGs
+                    var defaultSvgDims = {width: 900,
+                                       height: 600,
+                                       margin: {
+                                           top: 5,
+                                           bottom: 5,
+                                           left: 10,
+                                           right: 10
+                                       }};
+                    
+                    // Displays all the usages of a word (called when the corresponding circle is clicked)
+                    // Places these usages into columns, sorted by pos., neg., and neutral sentiment.
+                    // Also populates the word summary div, where metrics are displayed.
+                    // Args:
+                    // word: the word to evaluate
+                    // secs: array of sections to evaluate for. Defaults to all sections.
+                    function displayUses(word,secs=sections) {
+                        // Select the divs for the columns
+                        var badCol = d3.select("#bad-container");
+                        var neutralCol = d3.select("#neutral-container");
+                        var goodCol = d3.select("#good-container");
+                        
+                        // Populate the word summary container with the word and its metrics.
+                        var summary = d3.select("#summary-container");
+                        summary.append("h1").html(word);
+                        var metrics = getWordMetrics(word,secs);
+                        var ul = summary.append("ul");
+                        ul.append("li").html("Frequency: " + Math.floor(metrics.frequency*1000000)/1000000);
+                        ul.append("li").html("Average sentiment score: " + Math.floor(metrics.sentiment*1000000)/1000000);
+                        ul.append("li").html("Used " + metrics.numBad + " times with <span class='word-highlight0'>negative</span> sentiment");
+                        ul.append("li").html("Used " + metrics.numGood + " times with <span class='word-highlight1'>positive</span> sentiment");
+                        ul.append("li").html("Used " + metrics.numNeutral + " times with <span class='word-highlight2'>neutral</span> sentiment");
+                        
+                        // Appends a single example to the appropriate column.
+                        // Args:
+                        // idx: the index of column to append to. 0 = negative sentiment, 1 = pos., 2 = neutral.
+                        // exData: a JS object containing the necessary data to display the example. Contains:
+                        //              * artic_title: the title of the article
+                        //              * artic_url: the URL of the article
+                        //              * text: the sentence to display
+                        //              * sentiment: the sentiment of the sentence
+                        function appendExample(idx,exData) {
+                            var col;
+                            if (idx == 0) {
+                                col = badCol;
+                            } else if (idx == 1) {
+                                col = goodCol;
+                            } else {
+                                col = neutralCol;
+                            }
+                            var div = col.append("div").attr("class","example-usage");
+                            var head = div.append("h3")
+                                .html("In " + "<a target='_blank' class='article-title' href='"+exData.artic_url+"'>"+exData.artic_title+"</a>" + ":");
+                            var text = div.append("p")
+                                .html(exData.text.replace(word,"<span class='word-highlight" + idx + "'>" + word + "</span>"));
+                            var sentiment = div.append("div")
+                                .html("Sentiment: " + exData.sentiment);
+                        }
+                        
+                        // Iterate through the sections, the articles, and the sentences therein to find usages of the word.
+                        // Populate exData and call appendExample with exData and the proper index.
+                        for (var sec of secs) {
+                            for (var artic of data[sec]) {
+                                for (var sent of artic["content"]) {
+                                    if (sent["words"].hasOwnProperty(word)) {
+                                        var exData = {
+                                            "artic_title": artic["title"],
+                                            "artic_url": artic["url"],
+                                            "text": sent["sentence"],
+                                            "sentiment": sent["sentiment"]
+                                        }
+                                        if (sent["sentiment"] < 0) {
+                                            appendExample(0,exData);
+                                        } else if (sent["sentiment"] > 0) {
+                                            appendExample(1,exData);
+                                        } else {
+                                            appendExample(2,exData);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Clear the columns that display the word data
+                    // Called before displaying examples of a different word, or when sections are changed.
+                    function clearDisplayCols() {
+                        var cols = d3.selectAll("div.sent-col")
+                            .html("");
+                        d3.select("#summary-container").html("");
+                    }
+                    
+                    // The word currently selected, and its metrics. Starts as an empty string.
+                    var selectedWord = "";
+                    var wordMetrics = [];
+                    
+                    // Create the beeswarm plot of word sentiment.
+                    // Args:
+                    // parentElt: The DOM element to append the SVG to (an empty div)
+                    // wordList: the list of words to display datapoints for
+                    // secs: the sections to display data for (defaults to all)
+                    // svgDims: the dimensions of the SVG (defaults to defaultSvgDims)
+                    function makeSentimentBeeswarm(parentElt,wordList,secs=sections,svgDims=defaultSvgDims) {
+                        // Create the SVG and append it to parentElt. Set its properties.
+                        var svg = parentElt.append("svg")
+                            .attr("width", svgDims.width)
+                            .attr("height", svgDims.height)
+                            .attr("class", "beeswarmSVG")
+                            .style("margin", "0 auto")
+                            .style("display", "block")
+                            .style("overflow", "visible");
+                        
+                        // When makeSentimentBeeswarm is called, empty wordMetrics and refill it.
+                        wordMetrics = [];
+                        for (word of wordList) {
+                            wordMetrics.push({"word": word,
+                                              "metrics": getWordMetrics(word,secs)});
+                        }
+                        
+                        // The x-axis scaling function. Transforms from sentiment values to SVG locations.
+                        var x = d3.scaleLinear()
+                            .domain(d3.extent(wordMetrics,function(d) {return d["metrics"]["sentiment"]}))
+                            .range([svgDims.margin.left,svgDims.width-svgDims.margin.right]);
+                        
+                        // Determine how to scale the circles based on the calculated frequencies.
+                        // Calculate scaling factor as the minimum of c1 and c2, where:
+                        //      c1 scales the circles such that the largest circle has radius 200
+                        //      c2 scales the circles such that the average radius is 12
+                        var scaleMaxTo = 200;
+                        var scaleMeanTo = 12;
+                        
+                        function getRadiusScaleFactor() {
+                            var maxF = d3.extent(wordMetrics,function(d) {return d["metrics"]["frequency"]})[1];
+                            var meanF = d3.mean(wordMetrics,function(d) {return d["metrics"]["frequency"]});
+                            console.log(maxF);
+                            console.log(meanF);
+                            // Want to scale it so that word with frequency = maxF has radius
+                            var sf = d3.min([scaleMaxTo/Math.sqrt(maxF), scaleMeanTo/Math.sqrt(meanF)]);
+                            return sf;
+                        }
+                        
+                        var radiusScaleFactor = getRadiusScaleFactor();
+                        
+                        // Get the radius to display, based on the frequency of usage.
+                        // Frequency is proportional to the area of the circle (thus to sqrt radius)
+                        function getR(d) {
+                            var freq = d["metrics"]["frequency"];
+                            return Math.sqrt(freq) * radiusScaleFactor;
+                        }
+                        
+                        // Get the color to display for a given datapoint.
+                        // Color based on average sentiment: red for neg., blue for pos., gray for neutral.
+                        function getColor(d) {
+                            var sent = d["metrics"]["sentiment"];
+
+                            if (sent < 0) {
+                                return "#b81800";
+                            } else if (sent > 0) {
+                                return "#007dd6";
+                            } else {
+                                return "#bbbbbb";
+                            }
+                        }
+                        
+                        // Create the force-directed graph simulation
+                        // Some of this code is adapted from https://bl.ocks.org/shimizu/e6209de87cdddde38dadbb746feaf3a3
+                        // Set the forces on the nodes:
+                        // They have a strong restoring force to their proper x location, y = height/2
+                        // y-axis is meaningless, just allows circles to not overlap.
+                        // forceManyBody is an additional force approximating the force on one body due to all the others
+                        // collide sets the distange between circles in the ultimate settled position
+                        var simulation = d3.forceSimulation()
+                            .force("collide",d3.forceCollide( function(d){return getR(d) + 3 }).iterations(16) )
+                            .force("charge", d3.forceManyBody())
+                            .force("y", d3.forceY(svgDims.height/2).strength(1))
+                            .force("x", d3.forceX(function(d){return x(d["metrics"]["sentiment"]);}).strength(1));
+                        
+                        // Enable dragging of the circles
+                        function dragstarted(d) {
+                            if (!d3.event.active) simulation.alphaTarget(0.3).restart();
+                            d.fx = d.x;
+                            d.fy = d.y;
+                        }
+
+                        function dragged(d) {
+                            d.fx = d3.event.x;
+                            d.fy = d3.event.y;
+                        }
+
+                        function dragended(d) {
+                            if (!d3.event.active) simulation.alphaTarget(0);
+                            d.fx = null;
+                            d.fy = null;
+                        }
+                        
+                        // Create the nodes to attach to the simulation
+                        // Enable mouseover to display the word.
+                        // On click it will call the displayUses function (after clearing)
+                        var node = svg.append("g")
+                            .attr("class", "nodes")
+                            .selectAll("circle")
+                            .data(wordMetrics)
+                            .enter().append("circle")
+                            .attr("r", function(d){return getR(d);})
+                            .on("mouseover", function(d) {
+                                d3.select(this).style("cursor","pointer");
+                                svg.append("text")
+                                    .attr("class", "tooltip")
+                                    .attr("x", d.x)
+                                    .attr("y", d.y)
+                                    .text(d["word"])
+                                    .attr("text-anchor", "middle")
+                                    .attr("alignment-baseline", "middle")
+                                    .style("pointer-events", "none")
+                                    .attr("opacity", 1.0)
+                            })
+                            .on("mouseout", function() {
+                                d3.select(this).style("cursor","default");
+                                svg.selectAll(".tooltip")
+                                    .remove();
+                            })
+                            .attr("fill", function(d){return getColor(d);})
+                            .attr("opacity", function(d) {
+                                if (d["word"] === selectedWord) {
+                                    return 1.0;
+                                } else {
+                                    return 0.6;
+                                }
+                            })
+                            .on("click", function(d) {
+                                svg.selectAll("circle").attr("opacity",0.6);
+                                d3.select(this).attr("opacity",1.0);
+                                selectedWord = d["word"];
+                                clearDisplayCols();
+                                displayUses(d["word"],secs);
+                            })
+                            .call(d3.drag()
+                                .on("start", dragstarted)
+                                .on("drag", dragged)
+                                .on("end", dragended));
+                        
+                        // One tick of the simulation. For some reason it had an error when x was 0 
+                        // and vx was neg., hence the checking if x > 0.
+                        var ticked = function() {
+                            node
+                                .attr("cx", function(d) {
+                                    if (d.x > 0) {
+                                        return d.x;
+                                    } else {
+                                        return 0;
+                                    }
+                                })
+                                .attr("cy", function(d) {
+                                    if (d.y > 0) {
+                                        return d.y;
+                                    } else {
+                                        return 0;
+                                    }
+                                });
+                        }  
+                        
+                        // Attach the proper data to the simulation
+                        simulation
+                            .nodes(wordMetrics)
+                            .on("tick", ticked);
+                    }
+                    
+                    // Populate wordsToShow with the top 150 nontrivial words from the newspaper.
+                    var wordsToShow = [];
+                    
+                    for (var e of topws.counts.slice(0,150)) {
+                        wordsToShow.push(e[0]);
+                    }
+                    
+                    // Enables changing the selection of newspaper sections
+                    // Args:
+                    // parentElt: the DOM element to append the selection bar to (an empty div)
+                    // svgParentElt: the containing div of the SVG
+                    // secs: the sections to initially select (defaults to sections)
+                    function makeSectionSelectionBar(parentElt,svgParentElt,secs=sections) {
+                        var con = parentElt.append("div").attr("class","buttonsContainer");
+                        for (var sec of sections) {
+                            var included = false;
+                            for (var i = 0; i < secs.length; i++) {
+                                if (sec === secs[i]) {
+                                    included = true;
+                                }
+                            }
+                            // Append a button for each section.
+                            // When clicked, toggles whether that section factors into the calculation
+                            //      that generates the visualization. Updates the whole page.
+                            con.append("button")
+                                .html(sec)
+                                .attr("value", sec)
+                                .attr("class", function() {return (included) ? "yes" : "no";})
+                                .on("click", function() {
+                                    var cls = this.className;
+                                    if (cls === "yes") {
+                                        d3.select(this).attr("class", "no");
+                                    } else {
+                                        d3.select(this).attr("class", "yes");
+                                    }
+                                    for (var i = 0; i < secs.length; i++) {
+                                        if (this.value === secs[i]) {
+                                            console.log(i);
+                                            console.log(secs.splice(i,1));
+                                            if (selectedWord !== "") {
+                                                clearDisplayCols();
+                                                displayUses(selectedWord,secs);
+                                            }
+                                            svgParentElt.selectAll("svg").remove();
+                                            makeSentimentBeeswarm(svgParentElt,wordsToShow,secs);
+                                            return;
+                                        }
+                                    }
+                                    secs.push(this.value);
+                                    if (selectedWord !== "") {
+                                        clearDisplayCols();
+                                        displayUses(selectedWord,secs);
+                                    }
+                                    svgParentElt.selectAll("svg").remove();
+                                    makeSentimentBeeswarm(svgParentElt,wordsToShow,secs);
+                                });
+                        }
+                    }
+                    
+                    // Create the plot, initially with just the frontpage selected
+                    makeSentimentBeeswarm(d3.select("#sentiment-beeswarm-container"),
+                                         wordsToShow,["frontpage"]
+                    );
+                    
+                    // make the selection bar, initially with just the frontpage selected
+                    makeSectionSelectionBar(d3.select("#section-selection-container"),d3.select("#sentiment-beeswarm-container"),["frontpage"]);
+                });
+            });
+        </script>
+    </body>
+</html>
